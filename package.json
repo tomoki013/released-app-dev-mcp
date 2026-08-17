@@ -1,0 +1,13 @@
+{
+  "name": "small-app-dev-mcp-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "pnpm -r --if-present run build",
+    "typecheck": "pnpm -r --if-present run typecheck"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "pnpm@11.11.0"
+}
