@@ -348,7 +348,7 @@ MCP client 設定例:
   "mcpServers": {
     "released-app-dev": {
       "command": "node",
-      "args": ["/path/to/small-app-dev-mcp/packages/released-app-dev-mcp/dist/index.js"],
+      "args": ["/path/to/released-app-dev-mcp/packages/released-app-dev-mcp/dist/index.js"],
       "env": {
         "APP_DEV_PROJECT_DIR": "/path/to/your/ios-app",
         "GITHUB_TOKEN": "ghp_xxx"
