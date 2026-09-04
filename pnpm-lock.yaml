@@ -24,7 +24,7 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/small-app-dev-mcp:
+  packages/released-app-dev-mcp:
     dependencies:
       '@app-dev/git-core':
         specifier: workspace:^

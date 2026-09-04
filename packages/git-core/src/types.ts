@@ -83,3 +83,9 @@ export interface ValidationCheck {
   detail?: string;
   severity: 'error' | 'warning';
 }
+
+/** Result of an in-memory merge probe — no refs or working tree touched. */
+export interface MergePreview {
+  state: 'clean' | 'conflict' | 'up-to-date' | 'unknown';
+  conflictingFiles: string[];
+}

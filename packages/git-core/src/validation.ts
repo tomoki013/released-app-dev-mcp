@@ -43,3 +43,23 @@ export function formatChecklist(title: string, result: ValidationResult): string
   lines.push(result.ok ? 'Ready.' : 'Not ready — resolve the items above.');
   return lines.join('\n');
 }
+
+/** `v1.4.0` -> `1.4.0`; anything else -> null. Production tags are the release source of truth. */
+export function versionFromTag(tag: string): string | null {
+  const match = tag.match(/^v(\d+\.\d+\.\d+)$/);
+  return match && isValidSemver(match[1]) ? match[1] : null;
+}
+
+export function tagForVersion(version: string): string {
+  return `v${version}`;
+}
+
+/** Highest `vX.Y.Z` tag in the list, or null when none of them is a production tag. */
+export function highestVersionTag(tags: string[]): string | null {
+  const versions = tags
+    .map((tag) => ({ tag, version: versionFromTag(tag) }))
+    .filter((t): t is { tag: string; version: string } => t.version !== null);
+  if (versions.length === 0) return null;
+  versions.sort((a, b) => compareSemver(a.version, b.version));
+  return versions[versions.length - 1].tag;
+}
