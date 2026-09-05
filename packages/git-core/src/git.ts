@@ -1,11 +1,31 @@
+import { execFile } from 'node:child_process';
 import { simpleGit, type SimpleGit } from 'simple-git';
-import type { BranchStatus, CommitSummary, WorkingTreeStatus } from './types.js';
+import type { BranchStatus, CommitSummary, MergePreview, WorkingTreeStatus } from './types.js';
 
 export class GitClient {
   private readonly git: SimpleGit;
 
   constructor(readonly cwd: string) {
     this.git = simpleGit(cwd);
+  }
+
+  /** Escape hatch for callers that need a plumbing command this class doesn't wrap. */
+  async raw(args: string[]): Promise<string> {
+    return this.git.raw(args);
+  }
+
+  /**
+   * Runs git and hands back the exit code instead of throwing. Needed for the
+   * commands whose *exit code* is the answer (`merge-tree` returns 1 for
+   * "conflicts"), which a throw-on-failure wrapper can't distinguish from a
+   * command that simply failed.
+   */
+  private runGit(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+    return new Promise((resolve) => {
+      execFile('git', args, { cwd: this.cwd, maxBuffer: 10 * 1024 * 1024 }, (error: any, stdout, stderr) => {
+        resolve({ code: error?.code ?? 0, stdout: stdout ?? '', stderr: stderr ?? '' });
+      });
+    });
   }
 
   async isRepo(): Promise<boolean> {
@@ -53,6 +73,22 @@ export class GitClient {
     return all.filter((b) => b.startsWith(prefix));
   }
 
+  /** Remote-tracking branches (without the `origin/` prefix) matching `prefix`. */
+  async listRemoteBranchesWithPrefix(prefix: string, remote = 'origin'): Promise<string[]> {
+    let raw: string;
+    try {
+      raw = await this.git.raw(['for-each-ref', '--format=%(refname:short)', `refs/remotes/${remote}`]);
+    } catch {
+      return [];
+    }
+    return raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((ref) => ref.slice(`${remote}/`.length))
+      .filter((branch) => branch !== 'HEAD' && branch.startsWith(prefix));
+  }
+
   async remoteBranchExists(branch: string, remote = 'origin'): Promise<boolean> {
     const result = await this.git.listRemote(['--heads', remote, branch]);
     return result.trim().length > 0;
@@ -70,6 +106,20 @@ export class GitClient {
     await this.git.checkoutBranch(branch, from);
   }
 
+  /**
+   * Deletes a local branch with `-d` (refuses when the branch isn't merged).
+   * Never uses `-D`: losing unmerged commits is exactly what this MCP exists
+   * to prevent, so an unmerged branch surfaces as an error for the caller to
+   * report instead of a silent deletion.
+   */
+  async deleteLocalBranch(branch: string): Promise<void> {
+    await this.git.raw(['branch', '-d', branch]);
+  }
+
+  async deleteRemoteBranch(branch: string, remote = 'origin'): Promise<void> {
+    await this.git.raw(['push', remote, '--delete', branch]);
+  }
+
   async push(branch: string, remote = 'origin', setUpstream = true): Promise<void> {
     if (setUpstream) {
       await this.git.push(remote, branch, ['--set-upstream']);
@@ -83,6 +133,31 @@ export class GitClient {
     const ahead = await this.git.raw(['rev-list', '--count', `${base}..${branch}`]);
     const behind = await this.git.raw(['rev-list', '--count', `${branch}..${base}`]);
     return { ahead: parseInt(ahead.trim(), 10) || 0, behind: parseInt(behind.trim(), 10) || 0 };
+  }
+
+  /** Full SHA for any revision, or null when the revision doesn't resolve. */
+  async revParse(rev: string): Promise<string | null> {
+    try {
+      const out = await this.git.raw(['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]);
+      return out.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async currentCommit(): Promise<string | null> {
+    return this.revParse('HEAD');
+  }
+
+  /** True when `ancestor` is contained in `descendant`'s history (i.e. already merged). */
+  async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
+    const [a, d] = await Promise.all([this.revParse(ancestor), this.revParse(descendant)]);
+    if (!a || !d) return false;
+    if (a === d) return true;
+    // Commits reachable from `a` but not from `d`; none means `a` is contained in `d`.
+    const { code, stdout } = await this.runGit(['rev-list', '--count', `${d}..${a}`]);
+    if (code !== 0) return false;
+    return parseInt(stdout.trim(), 10) === 0;
   }
 
   /** `git log <range>` wrapper, e.g. range = "main..release". */
@@ -103,6 +178,39 @@ export class GitClient {
     await this.git.merge([source]);
   }
 
+  /** Merge that always records a merge commit, so release/hotfix merges stay visible in history. */
+  async mergeBranchNoFf(target: string, source: string, message: string): Promise<void> {
+    await this.checkout(target);
+    await this.git.raw(['merge', '--no-ff', '-m', message, source]);
+  }
+
+  async abortMerge(): Promise<void> {
+    await this.git.raw(['merge', '--abort']).catch(() => undefined);
+  }
+
+  /**
+   * Answers "would merging `source` into `target` conflict?" WITHOUT touching
+   * the working tree or any ref — `merge-tree --write-tree` merges in memory.
+   * Returns 'unknown' on older Git, so callers must treat that as "not proven
+   * safe" rather than as a green light.
+   */
+  async previewMerge(target: string, source: string): Promise<MergePreview> {
+    const targetSha = await this.revParse(target);
+    const sourceSha = await this.revParse(source);
+    if (!targetSha || !sourceSha) return { state: 'unknown', conflictingFiles: [] };
+
+    if (await this.isAncestor(sourceSha, targetSha)) {
+      return { state: 'up-to-date', conflictingFiles: [] };
+    }
+
+    const { code, stdout } = await this.runGit(['merge-tree', '--write-tree', '--name-only', targetSha, sourceSha]);
+    if (code === 0) return { state: 'clean', conflictingFiles: [] };
+    // 1 = merged with conflicts. Anything else (unsupported flag on old Git,
+    // a bad revision) is "we don't know" — never a green light.
+    if (code !== 1) return { state: 'unknown', conflictingFiles: [] };
+    return { state: 'conflict', conflictingFiles: parseMergeTreeConflicts(stdout) };
+  }
+
   /** Most recent tag reachable from `branch`, or null if there are none. */
   async latestTag(branch: string): Promise<string | null> {
     try {
@@ -113,16 +221,37 @@ export class GitClient {
     }
   }
 
+  async listTags(): Promise<string[]> {
+    const tags = await this.git.tags();
+    return tags.all;
+  }
+
   async tagExists(tag: string): Promise<boolean> {
     const tags = await this.git.tags();
     return tags.all.includes(tag);
   }
 
-  async createTag(tag: string, message?: string): Promise<void> {
+  async remoteTagExists(tag: string, remote = 'origin'): Promise<boolean> {
+    try {
+      const out = await this.git.listRemote(['--tags', remote, `refs/tags/${tag}`]);
+      return out.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Commit a tag points at (dereferencing annotated tags), or null. */
+  async tagCommit(tag: string): Promise<string | null> {
+    return this.revParse(tag);
+  }
+
+  async createTag(tag: string, message?: string, commit?: string): Promise<void> {
     if (message) {
-      await this.git.addAnnotatedTag(tag, message);
+      const args = ['tag', '-a', tag, '-m', message];
+      if (commit) args.push(commit);
+      await this.git.raw(args);
     } else {
-      await this.git.addTag(tag);
+      await this.git.raw(commit ? ['tag', tag, commit] : ['tag', tag]);
     }
   }
 
@@ -177,6 +306,21 @@ export class GitClient {
     const found = remotes.find((r) => r.name === remote);
     return found?.refs?.fetch ?? null;
   }
+}
+
+/**
+ * `merge-tree --write-tree --name-only` prints the resulting tree OID on the
+ * first line, then the conflicted paths, then a blank line and the human-readable
+ * conflict messages.
+ */
+function parseMergeTreeConflicts(stdout: string): string[] {
+  const lines = stdout.split('\n').map((l) => l.trim());
+  const files: string[] = [];
+  for (const line of lines.slice(1)) {
+    if (!line) break;
+    files.push(line);
+  }
+  return files;
 }
 
 /** Parses a GitHub `owner/repo` pair out of an https or ssh remote URL. */
