@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "released-app-dev-mcp": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/packages/released-app-dev-mcp/dist/index.js"]
+    }
+  }
+}
