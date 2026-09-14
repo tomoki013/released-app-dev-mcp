@@ -1,7 +1,7 @@
 import { formatChecklist, tagForVersion, type ValidationCheck } from '@app-dev/git-core';
 import { cleanWorktreeCheck, versionChecks } from '../core/checks.js';
 import { requireManaged, resolveProject, type ProjectContext } from '../core/context.js';
-import { formatMergeOutcome, hasBlockingOutcome, syncTargets } from '../core/merge.js';
+import { featureBranchReminder, formatMergeOutcome, hasBlockingOutcome, syncTargets } from '../core/merge.js';
 import { cleanupBranch, createProductionTag, mergeIntoProduction } from '../core/release.js';
 import { findCandidate, loadState, recordPublished } from '../core/state.js';
 
@@ -150,5 +150,12 @@ export async function finishRelease(ctx: ProjectContext, opts: FinishReleaseOpti
   if (hasBlockingOutcome(outcomes)) {
     lines.push('', '⚠ Some sync targets need manual resolution (see above) — do it before the next release.');
   }
+  const reminder = await featureBranchReminder(
+    ctx.git,
+    production,
+    strategy.developmentBranch,
+    ctx.config.branches.featurePrefix,
+  );
+  if (reminder) lines.push('', reminder);
   return lines.join('\n');
 }

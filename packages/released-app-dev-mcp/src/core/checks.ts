@@ -7,7 +7,7 @@ import {
   highestVersionTag,
   type ValidationCheck,
 } from '@app-dev/git-core';
-import { resolveGitHubClient, type ProjectContext } from './context.js';
+import { GITHUB_TOKEN_HINT, resolveGitHubClient, type ProjectContext } from './context.js';
 
 const SECRET_FILE_PATTERNS = [
   /(^|\/)\.env(\..+)?$/i,
@@ -82,7 +82,7 @@ export async function ciCheck(ctx: ProjectContext, branch: string): Promise<Vali
       label: 'CI passing',
       ok: false,
       severity: 'warning',
-      detail: 'GITHUB_TOKEN not set — CI could not be checked',
+      detail: `no GitHub credentials — CI could not be checked (${GITHUB_TOKEN_HINT})`,
     };
   }
   try {

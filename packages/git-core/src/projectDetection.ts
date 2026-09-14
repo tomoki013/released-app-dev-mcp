@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readdirSync } from 'node:fs';
-import { basename } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 
 const execFileAsync = promisify(execFile);
+
+export type ProjectGenerator = 'xcodegen' | 'tuist';
 
 export interface DetectedProject {
   platform: 'ios';
@@ -13,7 +15,14 @@ export interface DetectedProject {
   bundleId: string | null;
   version: string | null;
   buildNumber: string | null;
+  /** Tool that produces the .xcodeproj from a spec file, when the project is generated rather than committed. */
+  generator: ProjectGenerator | null;
 }
+
+const GENERATOR_SPECS: Array<{ generator: ProjectGenerator; file: string; namePattern: RegExp }> = [
+  { generator: 'xcodegen', file: 'project.yml', namePattern: /^name:\s*["']?([^"'\n#]+?)["']?\s*(#.*)?$/m },
+  { generator: 'tuist', file: 'Project.swift', namePattern: /name:\s*"([^"]+)"/ },
+];
 
 export interface DetectProjectOverrides {
   /** From .appdev.yml `project.path` — takes priority over auto-detected project file. */
@@ -34,7 +43,12 @@ export async function detectProject(
   cwd: string,
   overrides: DetectProjectOverrides = {},
 ): Promise<DetectedProject | null> {
-  const projectFile = overrides.path ? fileFromPath(overrides.path) : findProjectFile(cwd);
+  const generated = findGeneratedProject(cwd);
+  // A generated .xcodeproj is usually gitignored, so the spec file is the only
+  // thing on disk in a fresh checkout — fall back to the name it declares.
+  const projectFile = overrides.path
+    ? fileFromPath(overrides.path)
+    : (findProjectFile(cwd) ?? (generated?.name ? fileFromPath(`${generated.name}.xcodeproj`) : null));
   if (!projectFile) return null;
 
   const project: DetectedProject = {
@@ -45,6 +59,7 @@ export async function detectProject(
     bundleId: null,
     version: null,
     buildNumber: null,
+    generator: generated?.generator ?? null,
   };
 
   if (overrides.scheme) {
@@ -52,6 +67,11 @@ export async function detectProject(
   } else {
     const schemes = await listSchemes(cwd, projectFile);
     project.scheme = pickScheme(schemes, projectFile.name);
+    // Without the generated project on disk there is nothing to list; the
+    // generator names the scheme after the project, so that is the best guess.
+    if (!project.scheme && project.generator) {
+      project.scheme = basename(projectFile.name).replace(/\.(xcworkspace|xcodeproj)$/, '');
+    }
   }
 
   if (project.scheme) {
@@ -64,6 +84,22 @@ export async function detectProject(
   }
 
   return project;
+}
+
+/** The project generator in use (XcodeGen / Tuist) and the project name its spec declares, if any. */
+export function findGeneratedProject(cwd: string): { generator: ProjectGenerator; name: string | null } | null {
+  for (const spec of GENERATOR_SPECS) {
+    const specPath = join(cwd, spec.file);
+    if (!existsSync(specPath)) continue;
+    let name: string | null = null;
+    try {
+      name = readFileSync(specPath, 'utf-8').match(spec.namePattern)?.[1]?.trim() ?? null;
+    } catch {
+      name = null;
+    }
+    return { generator: spec.generator, name };
+  }
+  return null;
 }
 
 function fileFromPath(path: string): { type: 'xcworkspace' | 'xcodeproj'; name: string } | null {

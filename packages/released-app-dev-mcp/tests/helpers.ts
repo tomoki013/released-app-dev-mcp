@@ -7,6 +7,8 @@ import { defaultConfig, saveConfig, type StrategyName } from '../src/core/config
 
 // Tests must never reach GitHub: every tool degrades to local-only Git when
 // there is no token, which is also the path an offline developer takes.
+// `ctxFor` passes `githubToken: null` so a signed-in `gh` on the developer's
+// machine is not picked up either.
 delete process.env.GITHUB_TOKEN;
 delete process.env.GH_TOKEN;
 
@@ -51,7 +53,7 @@ export function createTestRepo(opts: TestRepoOptions = {}): string {
 }
 
 export async function ctxFor(dir: string): Promise<ProjectContext> {
-  return buildContext(dir);
+  return buildContext(dir, { githubToken: null });
 }
 
 /** Commits `content` to `file` on `branch`, returning to the previous branch afterwards. */

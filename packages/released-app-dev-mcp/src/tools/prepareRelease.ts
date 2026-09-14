@@ -30,6 +30,7 @@ export async function prepareRelease(ctx: ProjectContext, opts: PrepareReleaseOp
           ? `Would create release candidate branch "${plan.branch}" from "${plan.source}"`
           : `"${plan.branch}" does not exist and this strategy does not create it — run setup_repository`,
       '',
+      ...(await uncommittedChangesSection(ctx, plan.source)),
       'Would check:',
       '  1. clean working tree',
       `  2. "${production}" branch exists`,
@@ -115,4 +116,29 @@ export async function prepareRelease(ctx: ProjectContext, opts: PrepareReleaseOp
   );
 
   return lines.join('\n');
+}
+
+const MAX_LISTED_FILES = 30;
+
+/**
+ * Whether uncommitted work belongs in this candidate or on a feature branch is
+ * a human call — listing the files up front is what makes that call quick.
+ */
+async function uncommittedChangesSection(ctx: ProjectContext, source: string): Promise<string[]> {
+  const tree = await ctx.git.workingTreeStatus();
+  if (tree.clean) return [];
+  const entries = [
+    ...tree.staged.map((f) => `staged     ${f}`),
+    ...tree.modified.filter((f) => !tree.staged.includes(f)).map((f) => `modified   ${f}`),
+    ...tree.notAdded.map((f) => `untracked  ${f}`),
+  ];
+  const shown = entries.slice(0, MAX_LISTED_FILES);
+  return [
+    `Uncommitted changes (${entries.length}) — the real run stops until the tree is clean.`,
+    `Decide first: commit them to "${source}" to ship them in this release, or move them to a`,
+    `${ctx.config.branches.featurePrefix}* branch to keep them out of it.`,
+    ...shown.map((e) => `  ${e}`),
+    ...(entries.length > shown.length ? [`  ... ${entries.length - shown.length} more`] : []),
+    '',
+  ];
 }

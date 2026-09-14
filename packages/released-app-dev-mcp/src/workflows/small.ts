@@ -3,8 +3,10 @@ import type { AppDevConfig } from '../core/config.js';
 import {
   archiveStep,
   buildStep,
+  checkoutSteps,
   generateCiYaml,
   MANAGED_MARKER_YAML,
+  TEMPLATE_VERSION_YAML,
   traceabilityStep,
   type GeneratedFile,
 } from './templates.js';
@@ -25,6 +27,7 @@ export function smallWorkflows(project: DetectedProject, config: AppDevConfig): 
     {
       path: '.github/workflows/release.yml',
       content: `${MANAGED_MARKER_YAML}
+${TEMPLATE_VERSION_YAML}
 name: Release
 
 # Fires only when a PR into ${production} is merged — and only treats it as a
@@ -47,9 +50,7 @@ jobs:
       )
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${production}
+${checkoutSteps(project, { ref: production })}
 
 ${buildStep(project)}
 

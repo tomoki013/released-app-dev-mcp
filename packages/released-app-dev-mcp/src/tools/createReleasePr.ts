@@ -1,5 +1,5 @@
 import { createPullRequest, findOpenPullRequest } from '@app-dev/git-core';
-import { requireManaged, resolveGitHubClient, type ProjectContext } from '../core/context.js';
+import { GITHUB_TOKEN_HINT, requireManaged, resolveGitHubClient, type ProjectContext } from '../core/context.js';
 
 export interface CreateReleasePrOptions {
   version: string;
@@ -44,7 +44,7 @@ export async function createReleasePr(ctx: ProjectContext, opts: CreateReleasePr
   }
 
   if (!ctx.githubToken) {
-    return 'GITHUB_TOKEN is not set — cannot create a pull request.';
+    return `No GitHub credentials — cannot create a pull request. ${GITHUB_TOKEN_HINT}.`;
   }
 
   const github = await resolveGitHubClient(ctx);

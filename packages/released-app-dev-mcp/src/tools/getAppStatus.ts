@@ -1,4 +1,4 @@
-import type { ProjectContext } from '../core/context.js';
+import { GITHUB_TOKEN_HINT, type ProjectContext } from '../core/context.js';
 import { collectStatus } from '../core/status.js';
 
 export async function getAppStatus(ctx: ProjectContext): Promise<string> {
@@ -86,7 +86,7 @@ export async function getAppStatus(ctx: ProjectContext): Promise<string> {
         ? `  ${status.ci.branch}: ${status.ci.state}`
         : status.githubError
           ? `  unavailable — ${status.githubError}`
-          : '  unavailable (GITHUB_TOKEN not configured)',
+          : `  unavailable — ${GITHUB_TOKEN_HINT}`,
     ].join('\n'),
   );
 

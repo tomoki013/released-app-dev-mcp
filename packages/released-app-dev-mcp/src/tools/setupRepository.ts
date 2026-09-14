@@ -11,7 +11,7 @@ import {
   type Lifecycle,
   type StrategyName,
 } from '../core/config.js';
-import { resolveGitHubClient, resolveProject, type ProjectContext } from '../core/context.js';
+import { GITHUB_TOKEN_HINT, resolveGitHubClient, resolveProject, type ProjectContext } from '../core/context.js';
 import { ensureGitignoreEntry, writeManagedFile, type StepResult } from '../core/files.js';
 import { STATE_FILENAME } from '../core/state.js';
 import { createStrategy } from '../strategies/index.js';
@@ -22,11 +22,14 @@ export interface SetupRepositoryOptions {
   lifecycle?: string;
   dryRun?: boolean;
   configureBranchProtection?: boolean;
+  /** Replace managed workflows that differ from the template. Default false — see the diff with dry_run first. */
+  overwriteWorkflows?: boolean;
 }
 
 export async function setupRepository(ctx: ProjectContext, opts: SetupRepositoryOptions = {}): Promise<string> {
   const dryRun = opts.dryRun ?? false;
   const configureBranchProtection = opts.configureBranchProtection ?? true;
+  const writeOpts = { dryRun, overwrite: opts.overwriteWorkflows ?? false };
 
   if (!(await ctx.git.isRepo())) {
     return 'This directory is not a Git repository. Run `git init` first.';
@@ -120,11 +123,17 @@ export async function setupRepository(ctx: ProjectContext, opts: SetupRepository
         `Add "project.path" / "project.scheme" to ${CONFIG_FILENAME} and re-run setup_repository.`,
     });
   } else {
+    if (project.generator) {
+      steps.push({
+        ok: true,
+        line: `${project.generator} project detected — workflows generate ${project.projectPath} before building`,
+      });
+    }
     for (const file of workflowsFor(project, config)) {
-      steps.push(writeManagedFile(ctx.cwd, file.path, file.content, dryRun));
+      steps.push(writeManagedFile(ctx.cwd, file.path, file.content, writeOpts));
     }
   }
-  steps.push(writeManagedFile(ctx.cwd, '.github/pull_request_template.md', generatePullRequestTemplate(), dryRun));
+  steps.push(writeManagedFile(ctx.cwd, '.github/pull_request_template.md', generatePullRequestTemplate(), writeOpts));
 
   // The release-state cache is a working record, not repository content: the
   // durable record of a release is its annotated production tag.
@@ -138,7 +147,7 @@ export async function setupRepository(ctx: ProjectContext, opts: SetupRepository
   if (!configureBranchProtection) {
     steps.push({ ok: true, line: 'branch protection skipped (configure_branch_protection: false)' });
   } else if (!ctx.githubToken) {
-    steps.push({ ok: false, line: 'branch protection skipped — GITHUB_TOKEN not set' });
+    steps.push({ ok: false, line: `branch protection skipped — no GitHub credentials (${GITHUB_TOKEN_HINT})` });
   } else {
     try {
       const github = await resolveGitHubClient(ctx);

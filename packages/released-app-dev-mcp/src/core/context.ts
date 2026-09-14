@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { GitClient, GitHubClient, parseOwnerRepo, detectProject, type DetectedProject } from '@app-dev/git-core';
 import { createStrategy, type Strategy } from '../strategies/index.js';
 import { CONFIG_FILENAME, loadConfig, type AppDevConfig } from './config.js';
@@ -14,7 +15,14 @@ export interface ProjectContext {
   githubToken: string | null;
 }
 
-export async function buildContext(cwd: string): Promise<ProjectContext> {
+export interface BuildContextOptions {
+  /** Explicit token; `null` disables GitHub entirely (tests, offline use). Omit to resolve from the environment. */
+  githubToken?: string | null;
+}
+
+export const GITHUB_TOKEN_HINT = 'set GITHUB_TOKEN (repo scope) or sign in with `gh auth login`';
+
+export async function buildContext(cwd: string, opts: BuildContextOptions = {}): Promise<ProjectContext> {
   const { config, found, path, fromLegacy, errors } = loadConfig(cwd);
   return {
     cwd,
@@ -25,8 +33,20 @@ export async function buildContext(cwd: string): Promise<ProjectContext> {
     configErrors: errors,
     strategy: createStrategy(config),
     git: new GitClient(cwd),
-    githubToken: process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? null,
+    githubToken: opts.githubToken !== undefined ? opts.githubToken : resolveGitHubToken(),
   };
+}
+
+/** GITHUB_TOKEN / GH_TOKEN first; otherwise whatever `gh` is already signed in with. */
+export function resolveGitHubToken(): string | null {
+  const fromEnv = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  if (fromEnv) return fromEnv;
+  try {
+    const token = execFileSync('gh', ['auth', 'token'], { encoding: 'utf-8', timeout: 5_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return token || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -62,9 +82,7 @@ export async function resolveProject(ctx: ProjectContext): Promise<DetectedProje
 
 export async function resolveGitHubClient(ctx: ProjectContext): Promise<GitHubClient> {
   if (!ctx.githubToken) {
-    throw new Error(
-      'GITHUB_TOKEN (or GH_TOKEN) environment variable is not set. Set it to a token with repo scope.',
-    );
+    throw new Error(`No GitHub credentials found — ${GITHUB_TOKEN_HINT}.`);
   }
   const remoteUrl = await ctx.git.remoteUrl();
   if (!remoteUrl) {

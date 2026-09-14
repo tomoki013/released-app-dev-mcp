@@ -8,7 +8,7 @@ import {
 } from '@app-dev/git-core';
 import { ciCheck, cleanWorktreeCheck } from '../core/checks.js';
 import { requireManaged, resolveGitHubClient, resolveProject, type ProjectContext } from '../core/context.js';
-import { formatMergeOutcome, hasBlockingOutcome, syncTargets } from '../core/merge.js';
+import { featureBranchReminder, formatMergeOutcome, hasBlockingOutcome, syncTargets } from '../core/merge.js';
 import { cleanupBranch, createProductionTag, mergeIntoProduction } from '../core/release.js';
 import { recordPublished } from '../core/state.js';
 import { resolveHotfixBranch } from './startHotfix.js';
@@ -148,6 +148,13 @@ export async function finishHotfix(ctx: ProjectContext, opts: FinishHotfixOption
       '   Resolve those merges manually — otherwise the next release will revert the hotfix.',
     );
   }
+  const reminder = await featureBranchReminder(
+    ctx.git,
+    production,
+    strategy.developmentBranch,
+    ctx.config.branches.featurePrefix,
+  );
+  if (reminder) lines.push('', reminder);
   return lines.join('\n');
 }
 

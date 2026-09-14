@@ -207,15 +207,15 @@ Strategy は毎回推測せず、リポジトリに commit される設定ファ
 | Tool | 役割 |
 | --- | --- |
 | `get_app_status` | **最初に呼ぶ。** managed/unmanaged・strategy・branch・production tag・active release/hotfix・divergence・CI・blocking issues・next action |
-| `setup_repository` | 公開済みアプリを MCP 管理下へ登録。config 生成 / branch 検証 / workflow 生成 / branch protection。冪等 |
-| `prepare_release` | Release Candidate の準備と検証。Small = `release`、Large = `develop` → `release/X.Y.Z` |
+| `setup_repository` | 公開済みアプリを MCP 管理下へ登録。config 生成 / branch 検証 / workflow 生成 / branch protection。冪等。テンプレートと差分のある managed workflow は `overwrite_workflows: true` を付けない限り上書きしない |
+| `prepare_release` | Release Candidate の準備と検証。Small = `release`、Large = `develop` → `release/X.Y.Z`。`dry_run` は未コミットファイル一覧も出す |
 | `create_release_pr` | Release Candidate → `main` の PR 作成（**merge はしない**） |
 | `finish_release` | **App Store 公開確定後**に Git を確定。production merge / tag / push / sync / 一時 branch cleanup |
 | `start_hotfix` | `main` から hotfix branch 作成（development branch からは作らない） |
 | `finish_hotfix` | hotfix の PR 作成 →（merge 後）tag 作成と sync（Small: `release` / Large: `develop` + active `release/*`） |
-| `sync_release` | production を development ライン（+ 進行中 Candidate）へ merge |
+| `sync_release` | production を development ライン（+ 進行中 Candidate）へ merge。`feature/*` は対象外なので、fix を取り込めていない feature branch を名指しで案内する |
 | `migrate_strategy` | Strategy 移行（`small → large` が主対象）。既定で dry-run |
-| `doctor` | Policy 違反の診断のみ。**勝手に修正しない** |
+| `doctor` | Policy 違反の診断のみ。**勝手に修正しない**。workflow の版ずれ / 手編集、PR trigger の漏れ、Candidate 上の prepare 以降のコミットも報告する |
 
 すべての Tool は `dry_run` を持つ（`migrate_strategy` は既定 `true`）。
 
@@ -287,8 +287,32 @@ release-candidate.yml      push → release/*（Candidate ビルド）
 production.yml             main への release/* / hotfix/* PR が merge されたとき
 ```
 
-生成ファイルの 1 行目には `# managed-by: released-app-dev-mcp` マーカーが入る。
-マーカーの無い自作ファイルは上書きしない（旧 `small-app-dev-mcp` マーカーも認識して更新する）。
+すべての workflow は checkout の直後に Xcode を選択（`maxim-lobanov/setup-xcode`）する。
+`project.yml`（XcodeGen）または `Project.swift`（Tuist）を検出した場合は、さらに
+SPM キャッシュ → generator インストール → `xcodegen generate` / `tuist generate` を
+`xcodebuild` の前に差し込む。生成プロジェクトでは `.xcodeproj` が commit されていないため、
+これが無いと `<App>.xcodeproj does not exist` で即失敗する。`.xcodeproj` が無いときは
+spec の `name:` からプロジェクト名と scheme を推定する（`.app-dev-mcp.json` の `project` で上書き可）。
+
+### managed marker と template-version
+
+生成ファイルの先頭 2 行:
+
+```yaml
+# managed-by: released-app-dev-mcp (see .app-dev-mcp.json)
+# template-version: 2
+```
+
+- マーカーの無い自作ファイルは上書きしない（旧 `small-app-dev-mcp` マーカーも認識する）。
+- managed ファイルがテンプレートと異なる場合、`setup_repository` は**上書きせず**に報告する。
+  `dry_run: true` で diff を表示し、納得したら `overwrite_workflows: true` で置き換える。
+- `doctor` は `template-version` を見て「テンプレートが新しくなった（`workflow_outdated`）」と
+  「手で編集された（`workflow_edited`）」を区別して報告する。
+- 手編集を恒久的に守りたいファイルは 1 行目を
+  `# managed-by: released-app-dev-mcp (customized)` にする。以後は再生成対象から外れる
+  （`migrate_strategy` でも触らない）。
+- `doctor` は自作 workflow も含めて `pull_request.branches` を見て、production / development /
+  `release/*`（Large）向け PR にテストが走らない場合 `ci_pr_trigger_missing` を報告する。
 
 ## Traceability
 
@@ -338,8 +362,11 @@ MCP サーバーは **対象アプリのリポジトリを working directory と
 
 ```bash
 export APP_DEV_PROJECT_DIR=/path/to/your/ios-app
-export GITHUB_TOKEN=ghp_xxx   # repo スコープ。未設定でもローカル Git 操作は動作する
+export GITHUB_TOKEN=ghp_xxx   # repo スコープ。未設定なら `gh auth token` にフォールバックする
 ```
+
+GitHub 認証の優先順位は `GITHUB_TOKEN` → `GH_TOKEN` → `gh auth token`（`gh auth login` 済みなら
+環境変数なしで PR 作成・CI 確認・branch protection が使える）。どれも無くてもローカル Git 操作は動作する。
 
 MCP client 設定例:
 
@@ -358,7 +385,7 @@ MCP client 設定例:
 }
 ```
 
-`GITHUB_TOKEN` が無い場合、CI 状態確認 / PR 作成 / branch protection のみ利用不可になり、
+GitHub 認証が一切無い場合、CI 状態確認 / PR 作成 / branch protection のみ利用不可になり、
 それ以外のローカル Git 操作はそのまま動作する。
 
 ## 構成
@@ -415,8 +442,13 @@ MCP を無視した branch strategy 変更
 | `unmanaged released app` と言われる | `setup_repository(strategy: "small" \| "large")` |
 | `setup_repository` が strategy を要求する | Strategy は推測しない仕様。提案は出るが決めるのは人間 |
 | workflow が生成されない | Xcode project / scheme を検出できていない。`.app-dev-mcp.json` の `project.path` / `project.scheme` を指定 |
+| CI が `<App>.xcodeproj does not exist` で落ちる | 生成プロジェクト。`project.yml` / `Project.swift` を repo 直下に置けば generate step が入る。自作 workflow なら `xcodebuild` の前に generate を足す |
+| `ci.yml differs from the template — kept` | 手編集かテンプレート更新。`setup_repository(dry_run: true)` で diff を見て、`overwrite_workflows: true` で置換するか 1 行目を `(customized)` にして守る |
+| `doctor` が `ci_pr_trigger_missing` を出す | development branch / `release/*` 向け PR にテストが走っていない。その workflow の `pull_request.branches` に追加する |
+| `doctor` が `release_branch_commits` を出す | prepare 以降に Candidate へ積まれたコミットの一覧。fix 以外は development branch へ移す |
+| `get_app_status` が古い `release/xxx` を Candidate 扱いしない | 仕様。`release/X.Y.Z`（semver）だけが Candidate |
 | `production tag "vX.Y.Z" is not taken` で止まる | 公開済み tag は上書きしない。バージョンを上げる |
 | Large で `release/X.Y.Z` を作れない | `release` branch が残っている。`develop` に取り込んだ後に削除する |
 | CONFLICT で停止した | 自動解決しない仕様。`git checkout <target> && git merge <source>` で手動解決 |
-| CI が `no checks found` | commit を push していない、または `GITHUB_TOKEN` 未設定 |
+| CI が `no checks found` | commit を push していない、または GitHub 認証が無い（`GITHUB_TOKEN` か `gh auth login`） |
 | 何が壊れているか分からない | `doctor` |

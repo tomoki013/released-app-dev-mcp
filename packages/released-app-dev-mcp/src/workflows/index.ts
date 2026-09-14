@@ -28,6 +28,7 @@ export function workflowPathsFor(strategy: StrategyName): string[] {
     bundleId: null,
     version: null,
     buildNumber: null,
+    generator: null,
   };
   const config = { branches: { production: 'main', development: strategy === 'large' ? 'develop' : 'release', hotfixPrefix: 'hotfix/', releasePrefix: 'release/', featurePrefix: 'feature/' } } as AppDevConfig;
   return WORKFLOW_SETS[strategy](stub, config).map((f) => f.path);

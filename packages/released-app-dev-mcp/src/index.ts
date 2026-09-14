@@ -31,14 +31,14 @@ async function ctx() {
 
 server.tool(
   'get_app_status',
-  'START HERE in any released iOS app repository. Reports whether the repo is managed by this MCP, its Git strategy (small/large), branch state, production tag, active release/hotfix, CI, blocking issues and the recommended next action.',
+  'READ-ONLY. START HERE in any released iOS app repository. Reports whether the repo is managed by this MCP, its Git strategy (small/large), branch state, production tag, active release/hotfix, CI, blocking issues and the recommended next action. Runs no Git write commands.',
   {},
   async () => text(await getAppStatus(await ctx())),
 );
 
 server.tool(
   'setup_repository',
-  'Register a released app with this MCP: write .app-dev-mcp.json (pinning the small/large strategy), create the development branch, generate the strategy-specific GitHub Actions workflows and PR template, and configure branch protection. Idempotent; never destroys existing files.',
+  'WRITES FILES AND BRANCHES. Register a released app with this MCP: writes .app-dev-mcp.json (pinning the small/large strategy), creates the development branch locally, writes .github/workflows/*.yml and the PR template, appends to .gitignore, and (with a GitHub token) configures branch protection on GitHub. Idempotent. Never pushes commits, never overwrites a hand-written file, and never replaces a managed workflow that differs from its template unless overwrite_workflows: true — use dry_run: true to see the diff first.',
   {
     strategy: z
       .enum(['small', 'large'])
@@ -52,22 +52,29 @@ server.tool(
     configure_branch_protection: z
       .boolean()
       .optional()
-      .describe('Also configure GitHub branch protection (requires GITHUB_TOKEN). Default true.'),
+      .describe('Also configure GitHub branch protection (needs GitHub credentials). Default true.'),
+    overwrite_workflows: z
+      .boolean()
+      .optional()
+      .describe(
+        'Replace managed workflow files that differ from the current template (template upgrade or hand edits). Default false. Files whose first line says "(customized)" are never touched.',
+      ),
   },
-  async ({ strategy, lifecycle, dry_run, configure_branch_protection }) =>
+  async ({ strategy, lifecycle, dry_run, configure_branch_protection, overwrite_workflows }) =>
     text(
       await setupRepository(await ctx(), {
         strategy,
         lifecycle,
         dryRun: dry_run,
         configureBranchProtection: configure_branch_protection,
+        overwriteWorkflows: overwrite_workflows,
       }),
     ),
 );
 
 server.tool(
   'prepare_release',
-  'Validate and prepare a release candidate for the given version. small: validates the release branch. large: cuts release/X.Y.Z from develop. Checks clean tree, version/tag availability, un-synced hotfixes, committed secrets and CI.',
+  'CREATES AND PUSHES A BRANCH (large strategy) and writes .app-dev-mcp.state.json. Validates and prepares a release candidate for the given version: checks clean tree, version/tag availability, un-synced hotfixes, committed secrets and CI. small: validates the existing release branch. large: creates release/X.Y.Z from develop and pushes it to origin. dry_run: true is read-only and also lists uncommitted files.',
   {
     version: z.string().describe('Target release version, e.g. "1.1.0".'),
     dry_run: z.boolean().optional().describe('List what would be checked and created without doing it.'),
@@ -77,7 +84,7 @@ server.tool(
 
 server.tool(
   'create_release_pr',
-  'Open the release candidate -> production pull request with an auto-generated change summary. Never merges it.',
+  'CREATES A PULL REQUEST ON GITHUB (release candidate -> production) with an auto-generated change summary. Never merges it. Needs GitHub credentials (GITHUB_TOKEN or gh auth login). dry_run: true only previews the title/body.',
   {
     version: z.string().describe('Target release version, e.g. "1.1.0".'),
     dry_run: z.boolean().optional().describe('Preview the PR title/body without creating it.'),
@@ -87,7 +94,7 @@ server.tool(
 
 server.tool(
   'finish_release',
-  'Run this AFTER the version is live on the App Store. Confirms the release commit reached the production branch, creates and pushes the vX.Y.Z tag (never overwriting one), syncs the release back into the development line, and retires the temporary release branch.',
+  'MERGES, TAGS AND PUSHES. Run this AFTER the version is live on the App Store. Merges the release branch into the production branch if the PR was not used, creates and pushes the annotated vX.Y.Z tag (never overwriting an existing tag), merges production back into the development line and pushes, and (only with delete_release_branch: true) deletes the temporary release branch locally and on origin.',
   {
     version: z.string().describe('The version that is now live, e.g. "1.1.0".'),
     dry_run: z.boolean().optional(),
@@ -102,7 +109,7 @@ server.tool(
 
 server.tool(
   'start_hotfix',
-  'Create a hotfix branch from the production lineage (main) for an urgent fix to the currently published version. Never branches from a development branch.',
+  'CREATES AND CHECKS OUT A LOCAL BRANCH. Fetches origin and fast-forwards the local production branch (main), then creates hotfix/<version-or-name> from it for an urgent fix to the currently published version and leaves it checked out. Nothing is pushed. Never branches from a development branch.',
   {
     name: z.string().describe('Short name for the hotfix, e.g. "startup crash".'),
     version: z.string().optional().describe('Target hotfix version, e.g. "1.0.1" — used for the branch name and tag.'),
@@ -113,7 +120,7 @@ server.tool(
 
 server.tool(
   'finish_hotfix',
-  'Land a hotfix: verifies the branch, opens its PR into main (or merges it when GitHub is unreachable), then — once merged — tags the published version and syncs the fix into the development branch and any in-flight release candidate. Stops on conflicts instead of resolving them.',
+  'CREATES A PULL REQUEST, OR MERGES, TAGS AND PUSHES. Two phases: while the hotfix is not on main it opens its PR into main (or merges locally when GitHub is unreachable) and stops. Once merged, it creates and pushes the vX.Y.Z tag and merges main into the development branch and every in-flight release/X.Y.Z, pushing each. Stops on conflicts instead of resolving them.',
   {
     name: z.string().describe('The hotfix name passed to start_hotfix.'),
     version: z.string().optional().describe('The published hotfix version, e.g. "1.0.1". Needed to create the tag.'),
@@ -126,7 +133,7 @@ server.tool(
 
 server.tool(
   'sync_release',
-  'Merge the production branch into the development line — "release" for the small strategy, "develop" plus every in-flight release/X.Y.Z for the large strategy. Use after a hotfix has landed on main.',
+  'MERGES AND PUSHES. Merges the production branch into the development line — "release" for the small strategy, "develop" plus every in-flight release/X.Y.Z for the large strategy — and pushes each merged branch. Use after a hotfix has landed on main. Stops on conflicts. dry_run: true only previews.',
   {
     dry_run: z.boolean().optional(),
   },
@@ -135,7 +142,7 @@ server.tool(
 
 server.tool(
   'migrate_strategy',
-  'Move this repository between Git strategies (small -> large is the supported direction). Always dry-runs by default; large -> small additionally requires confirm: true. Never deletes branches.',
+  'REWRITES CONFIG AND WORKFLOWS, CREATES A BRANCH. Moves this repository between Git strategies (small -> large is the supported direction): creates the new development branch from the old one, rewrites .app-dev-mcp.json, replaces the managed workflow files. Dry-runs by default (dry_run: false to apply); large -> small additionally requires confirm: true. Never deletes branches.',
   {
     to: z.enum(['small', 'large']).describe('Target strategy.'),
     dry_run: z.boolean().optional().describe('Defaults to true — pass false to apply the plan.'),
@@ -146,7 +153,7 @@ server.tool(
 
 server.tool(
   'doctor',
-  'Diagnose this repository against the released-app Git policy: missing config, wrong branch structure, missing production tag, direct commits to main, un-synced hotfixes, abandoned release branches, divergence, wrong/stale workflows, strategy mismatch and branch protection. Reports only — never repairs.',
+  'READ-ONLY. Diagnoses this repository against the released-app Git policy: missing config, wrong branch structure, missing production tag, direct commits to main, un-synced hotfixes, abandoned release branches, commits on a frozen candidate, divergence, outdated/hand-edited workflows, PR triggers that skip a branch, strategy mismatch and branch protection. Reports only — never repairs.',
   {},
   async () => text(await doctor(await ctx())),
 );

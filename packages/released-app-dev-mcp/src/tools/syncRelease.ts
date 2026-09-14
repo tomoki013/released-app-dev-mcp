@@ -1,5 +1,5 @@
 import { requireManaged, type ProjectContext } from '../core/context.js';
-import { formatMergeOutcome, hasBlockingOutcome, syncTargets } from '../core/merge.js';
+import { featureBranchReminder, formatMergeOutcome, hasBlockingOutcome, syncTargets } from '../core/merge.js';
 
 export interface SyncReleaseOptions {
   dryRun?: boolean;
@@ -53,5 +53,12 @@ export async function syncRelease(ctx: ProjectContext, opts: SyncReleaseOptions 
   if (hasBlockingOutcome(outcomes)) {
     lines.push('', '⚠ Resolve the conflicts above manually — nothing was force-merged.');
   }
+  const reminder = await featureBranchReminder(
+    ctx.git,
+    production,
+    ctx.strategy.developmentBranch,
+    ctx.config.branches.featurePrefix,
+  );
+  if (reminder) lines.push('', reminder);
   return lines.join('\n');
 }

@@ -136,6 +136,29 @@ export function hasBlockingOutcome(outcomes: MergeOutcome[]): boolean {
   return outcomes.some((o) => o.kind === 'conflict' || o.kind === 'failed');
 }
 
+/**
+ * Feature branches are deliberately not sync targets — merging into someone's
+ * in-progress work is not this MCP's call. But after a hotfix lands they are
+ * the one place the fix is still missing, so say which ones and what to do.
+ */
+export async function featureBranchReminder(
+  git: GitClient,
+  production: string,
+  development: string,
+  featurePrefix: string,
+): Promise<string | null> {
+  const features = await git.listLocalBranchesWithPrefix(featurePrefix);
+  const stale: string[] = [];
+  for (const branch of features) {
+    if (!(await git.isAncestor(production, branch))) stale.push(branch);
+  }
+  if (stale.length === 0) return null;
+  return [
+    `ℹ ${featurePrefix}* branches are not synced automatically. Bring "${development}" into these yourself`,
+    `  (git merge ${development}, or rebase) before opening their PRs: ${stale.join(', ')}`,
+  ].join('\n');
+}
+
 async function restoreBranch(git: GitClient, branch: string): Promise<void> {
   if (!branch) return;
   const current = await git.currentBranch();

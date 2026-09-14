@@ -1,4 +1,4 @@
-import type { ValidationCheck } from '@app-dev/git-core';
+import { isValidSemver, type ValidationCheck } from '@app-dev/git-core';
 import { BaseStrategy } from './base.js';
 import type { ReleaseBranchPlan, StrategyContext, SyncTarget } from './types.js';
 
@@ -137,11 +137,15 @@ export class LargeStrategy extends BaseStrategy {
   }
 }
 
-/** Release candidate branches that exist locally or on origin. */
+/**
+ * Release candidate branches that exist locally or on origin. Only
+ * `<prefix>X.Y.Z` qualifies: a stray `release/build-41` or `release/ipad`
+ * is not a candidate and must not steer get_app_status or hotfix syncs.
+ */
 export async function activeReleaseBranches(ctx: StrategyContext, prefix: string): Promise<string[]> {
   const [local, remote] = await Promise.all([
     ctx.git.listLocalBranchesWithPrefix(prefix),
     ctx.git.listRemoteBranchesWithPrefix(prefix).catch(() => [] as string[]),
   ]);
-  return [...new Set([...local, ...remote])].sort();
+  return [...new Set([...local, ...remote])].filter((b) => isValidSemver(b.slice(prefix.length))).sort();
 }

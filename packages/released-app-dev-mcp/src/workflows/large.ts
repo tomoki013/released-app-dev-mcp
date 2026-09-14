@@ -3,8 +3,10 @@ import type { AppDevConfig } from '../core/config.js';
 import {
   archiveStep,
   buildStep,
+  checkoutSteps,
   generateCiYaml,
   MANAGED_MARKER_YAML,
+  TEMPLATE_VERSION_YAML,
   traceabilityStep,
   type GeneratedFile,
 } from './templates.js';
@@ -32,6 +34,7 @@ export function largeWorkflows(project: DetectedProject, config: AppDevConfig): 
     {
       path: '.github/workflows/internal-testflight.yml',
       content: `${MANAGED_MARKER_YAML}
+${TEMPLATE_VERSION_YAML}
 name: Internal Build
 
 # Every push to ${development} produces an internal build. This is the fast
@@ -45,7 +48,7 @@ jobs:
   internal:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+${checkoutSteps(project)}
 
 ${buildStep(project)}
 
@@ -57,6 +60,7 @@ ${traceabilityStep()}
     {
       path: '.github/workflows/release-candidate.yml',
       content: `${MANAGED_MARKER_YAML}
+${TEMPLATE_VERSION_YAML}
 name: Release Candidate
 
 # Builds the frozen candidate on ${releasePrefix}X.Y.Z. Only fixes belong on this
@@ -70,7 +74,7 @@ jobs:
   candidate:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+${checkoutSteps(project)}
 
 ${buildStep(project)}
 
@@ -87,6 +91,7 @@ ${traceabilityStep()}
     {
       path: '.github/workflows/production.yml',
       content: `${MANAGED_MARKER_YAML}
+${TEMPLATE_VERSION_YAML}
 name: Production
 
 # Fires only when a release candidate or hotfix PR is merged into ${production}.
@@ -107,9 +112,7 @@ jobs:
       )
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${production}
+${checkoutSteps(project, { ref: production })}
 
 ${buildStep(project)}
 

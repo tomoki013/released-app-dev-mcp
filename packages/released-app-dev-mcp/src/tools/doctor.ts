@@ -1,12 +1,12 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import yaml from 'js-yaml';
 import { highestVersionTag } from '@app-dev/git-core';
 import { CONFIG_FILENAME } from '../core/config.js';
-import { resolveGitHubClient, resolveProject, type ProjectContext } from '../core/context.js';
-import { isManagedFile } from '../core/files.js';
+import { GITHUB_TOKEN_HINT, resolveGitHubClient, resolveProject, type ProjectContext } from '../core/context.js';
 import { loadState } from '../core/state.js';
 import { activeReleaseBranches, strategyNames } from '../strategies/index.js';
-import { workflowPathsFor, workflowsFor } from '../workflows/index.js';
+import { parseManagedHeader, TEMPLATE_VERSION, workflowPathsFor, workflowsFor } from '../workflows/index.js';
 
 interface Finding {
   severity: 'error' | 'warning' | 'info';
@@ -188,6 +188,22 @@ export async function doctor(ctx: ProjectContext): Promise<string> {
         message: `Recorded candidate ${candidate.version} points at "${candidate.releaseBranch}", which no longer exists.`,
         fix: `finish_release(version: "${candidate.version}") if it shipped, or ignore it if it was abandoned`,
       });
+      continue;
+    }
+    // A candidate takes fixes only. The rule is enforced by people, so show
+    // them what landed since the freeze and let them judge each commit.
+    const since = await ctx.git.logRange(`${candidate.commit}..${candidate.releaseBranch}`).catch(() => []);
+    if (since.length > 0) {
+      const shown = since.slice(0, MAX_LISTED_COMMITS);
+      findings.push({
+        severity: 'info',
+        id: 'release_branch_commits',
+        message:
+          `"${candidate.releaseBranch}" has ${since.length} commit(s) since candidate ${candidate.version} was prepared at ${candidate.commit.slice(0, 7)} — each one should be a fix, not a feature:\n` +
+          shown.map((c) => `      ${c.hash.slice(0, 7)} ${c.message.split('\n')[0]}`).join('\n') +
+          (since.length > shown.length ? `\n      ... ${since.length - shown.length} more` : ''),
+        fix: `move anything that is not a fix to "${development}"; re-run prepare_release(version: "${candidate.version}") to re-record the candidate`,
+      });
     }
   }
 
@@ -210,15 +226,28 @@ export async function doctor(ctx: ProjectContext): Promise<string> {
           message: `${file.path} is missing for the "${strategy.name}" strategy.`,
           fix: 'setup_repository()',
         });
-      } else if (isManagedFile(abs) && readFileSafe(abs) !== file.content) {
+        continue;
+      }
+      const current = readFileSafe(abs);
+      const header = parseManagedHeader(current);
+      if (!header.managed || header.customized || current === file.content) continue;
+      if (header.templateVersion === null || header.templateVersion < TEMPLATE_VERSION) {
         findings.push({
           severity: 'info',
           id: 'workflow_outdated',
-          message: `${file.path} differs from the generated template.`,
-          fix: 'setup_repository() to regenerate it',
+          message: `${file.path} was generated from template v${header.templateVersion ?? '?'}; the current template is v${TEMPLATE_VERSION}.`,
+          fix: 'setup_repository(dry_run: true) to see the diff, then setup_repository(overwrite_workflows: true) — hand edits in the file will be lost, so mark its first line "(customized)" instead if you want to keep them',
+        });
+      } else {
+        findings.push({
+          severity: 'info',
+          id: 'workflow_edited',
+          message: `${file.path} has been edited by hand since it was generated (template v${TEMPLATE_VERSION}).`,
+          fix: 'change its first line to "# managed-by: released-app-dev-mcp (customized)" so setup_repository never regenerates it — or setup_repository(overwrite_workflows: true) to discard the edits',
         });
       }
     }
+    findings.push(...pullRequestTriggerFindings(ctx));
     const expected = new Set(workflowsFor(project, ctx.config).map((f) => f.path));
     for (const other of strategyNames().filter((n) => n !== strategy.name)) {
       for (const path of workflowPathsFor(other)) {
@@ -261,12 +290,99 @@ export async function doctor(ctx: ProjectContext): Promise<string> {
     findings.push({
       severity: 'info',
       id: 'no_github_token',
-      message: 'GITHUB_TOKEN is not set — CI and branch-protection checks were skipped.',
-      fix: 'export GITHUB_TOKEN=<token with repo scope>',
+      message: 'No GitHub credentials — CI and branch-protection checks were skipped.',
+      fix: GITHUB_TOKEN_HINT,
     });
   }
 
   return formatFindings(ctx, findings);
+}
+
+const MAX_LISTED_COMMITS = 10;
+
+/**
+ * A PR into the development branch or a release candidate that no workflow
+ * runs on merges untested. Every workflow counts here, including hand-written
+ * ones this MCP does not manage — the question is coverage, not ownership.
+ */
+function pullRequestTriggerFindings(ctx: ProjectContext): Finding[] {
+  const dir = join(ctx.cwd, '.github', 'workflows');
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter((f) => /\.ya?ml$/.test(f));
+  } catch {
+    return [];
+  }
+  if (files.length === 0) return [];
+
+  const patterns: string[] = [];
+  let anyPullRequest = false;
+  for (const file of files) {
+    let doc: any;
+    try {
+      doc = yaml.load(readFileSafe(join(dir, file)));
+    } catch {
+      continue;
+    }
+    // Some YAML parsers read the bare key `on` as boolean true.
+    const on = doc?.on ?? doc?.true;
+    const trigger = ['pull_request', 'pull_request_target'].map((e) => triggerConfig(on, e)).find((t) => t.present);
+    if (!trigger) continue;
+    anyPullRequest = true;
+    const branches = trigger.config?.branches;
+    if (branches === undefined) return []; // No branch filter: every PR runs it.
+    patterns.push(...(Array.isArray(branches) ? branches : [branches]).map(String));
+  }
+
+  const strategy = ctx.strategy;
+  const required: Array<{ label: string; sample: string }> = [
+    { label: strategy.productionBranch, sample: strategy.productionBranch },
+    { label: strategy.developmentBranch, sample: strategy.developmentBranch },
+  ];
+  if (strategy.releaseBranchPlan('0.0.0').temporary) {
+    const prefix = ctx.config.branches.releasePrefix;
+    required.push({ label: `${prefix}*`, sample: `${prefix}0.0.0` });
+  }
+  if (!anyPullRequest) {
+    return [
+      {
+        severity: 'warning',
+        id: 'ci_pr_trigger_missing',
+        message: 'No workflow runs on pull requests — nothing is tested before a merge.',
+        fix: 'setup_repository() generates ci.yml, or add a pull_request trigger to your own workflow',
+      },
+    ];
+  }
+  const uncovered = required.filter((r) => !patterns.some((p) => branchGlobMatches(p, r.sample)));
+  if (uncovered.length === 0) return [];
+  return [
+    {
+      severity: 'warning',
+      id: 'ci_pr_trigger_missing',
+      message: `No workflow runs on pull requests into ${uncovered.map((u) => `"${u.label}"`).join(', ')} — those PRs merge untested.`,
+      fix: 'add them to pull_request.branches in your CI workflow (the managed ci.yml covers all of them: setup_repository)',
+    },
+  ];
+}
+
+/** Whether `on` declares `event`, and its config when it has one (`on: [pull_request]` and a bare `pull_request:` have none). */
+function triggerConfig(on: unknown, event: string): { present: boolean; config: any } {
+  if (typeof on === 'string') return { present: on === event, config: null };
+  if (Array.isArray(on)) return { present: on.includes(event), config: null };
+  if (on && typeof on === 'object' && event in on) return { present: true, config: (on as any)[event] };
+  return { present: false, config: null };
+}
+
+/** GitHub's branch filter globs: `*` stays within one segment, `**` spans segments. */
+function branchGlobMatches(pattern: string, branch: string): boolean {
+  if (pattern.startsWith('!')) return false;
+  const re = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*/g, ' ')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\?/g, '[^/]')
+    .replace(/ /g, '.*');
+  return new RegExp(`^${re}$`).test(branch);
 }
 
 function readFileSafe(path: string): string {

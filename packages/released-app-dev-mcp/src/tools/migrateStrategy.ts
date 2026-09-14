@@ -99,8 +99,10 @@ export async function migrateStrategy(ctx: ProjectContext, opts: MigrateStrategy
   if (!project || !project.scheme) {
     steps.push({ ok: false, line: 'could not detect the Xcode project — workflows not regenerated' });
   } else {
+    // A strategy change rewrites the branch lists, so the managed files must
+    // move; the default dry run shows the diff before anything is replaced.
     const nextFiles = workflowsFor(project, newConfig);
-    for (const file of nextFiles) steps.push(writeManagedFile(ctx.cwd, file.path, file.content, dryRun));
+    for (const file of nextFiles) steps.push(writeManagedFile(ctx.cwd, file.path, file.content, { dryRun, overwrite: true }));
 
     const keep = new Set(nextFiles.map((f) => f.path));
     for (const file of workflowsFor(project, ctx.config)) {
