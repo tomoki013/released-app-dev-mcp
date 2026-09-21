@@ -11,6 +11,8 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-09-22
+
 ### Added
 - **アプリ側のアップデート情報（App Store "What's New"）を義務化。** `prepare_release` / `finish_release` /
   `finish_hotfix` は、前回リリース（最新 `vX.Y.Z` tag）以降に `.appstore/<locale>/whats_new.txt` が

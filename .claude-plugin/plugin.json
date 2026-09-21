@@ -1,5 +1,5 @@
 {
   "name": "released-app-dev-mcp",
   "description": "Git/GitHub release workflow MCP for iOS apps already published on the App Store (small/large branch strategies).",
-  "version": "0.3.0"
+  "version": "0.4.0"
 }

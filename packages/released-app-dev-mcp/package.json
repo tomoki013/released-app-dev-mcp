@@ -1,6 +1,6 @@
 {
   "name": "released-app-dev-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server that owns the Git/GitHub release workflow of iOS apps already published on the App Store — small and large branch strategies in one server.",
   "type": "module",
   "bin": {

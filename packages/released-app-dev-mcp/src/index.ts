@@ -18,7 +18,7 @@ const PROJECT_DIR = process.env.APP_DEV_PROJECT_DIR ?? process.cwd();
 
 const server = new McpServer({
   name: 'released-app-dev-mcp',
-  version: '0.3.0',
+  version: '0.4.0',
 });
 
 function text(content: string) {
