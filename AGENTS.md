@@ -10,6 +10,19 @@ Small / Large の 2 Strategy を 1 つの MCP サーバー内に持つ。
 - Git / GitHub の low-level 実装は `packages/git-core` と `src/core/` に集約する。
 - 変更後は `pnpm run build && pnpm run test`（Node 22+ / Git 2.38+）。
 
+### アップデート情報の更新は必須
+
+`packages/*/src` を変更したら、**同じ commit / PR で** [CHANGELOG.md](CHANGELOG.md) の
+`## Unreleased` に何を変えたかを書く。書き忘れは `pnpm run test`（`check:changelog`）と CI が落とす。
+
+- 見出しは `Added` / `Changed` / `Fixed` / `Removed` / `Docs`。利用者視点で 1 行ずつ。
+- ツールの挙動・引数・description・生成 workflow の内容が変わったら必ず対象。
+- リリース（プラグイン再アップロード・tag）時は `Unreleased` を `## X.Y.Z - YYYY-MM-DD` に改名し、
+  次の 4 箇所の version を同じ値に上げる:
+  `package.json` / `packages/released-app-dev-mcp/package.json` /
+  `.claude-plugin/plugin.json` / `packages/released-app-dev-mcp/src/index.ts`
+- プラグイン配布用バンドルは `pnpm --filter released-app-dev-mcp run bundle`（`dist/index.mjs`）。
+
 ## When working in a RELEASED iOS app repository
 
 このセクションは、この MCP を **利用する側**（App Store 公開済み iOS アプリ）の作業に適用される。
