@@ -29,6 +29,8 @@ export interface AppDevConfig {
     mergeStrategy: 'merge' | 'squash' | 'rebase';
     requireCleanWorktree: boolean;
     requireCi: boolean;
+    /** Block a release/hotfix until the App Store "What's New" text changed since the last shipped version. */
+    requireReleaseNotes: boolean;
   };
   hotfix: {
     /** Always the production lineage — kept explicit so a misconfiguration is visible, not implicit. */
@@ -61,7 +63,7 @@ export function defaultConfig(strategy: StrategyName, lifecycle: Lifecycle = 're
     platform: 'ios',
     project: {},
     branches: { ...(strategy === 'large' ? LARGE_BRANCHES : SMALL_BRANCHES) },
-    release: { mergeStrategy: 'merge', requireCleanWorktree: true, requireCi: true },
+    release: { mergeStrategy: 'merge', requireCleanWorktree: true, requireCi: true, requireReleaseNotes: true },
     hotfix: { source: 'main' },
     github: { requirePullRequestToProduction: true, blockForcePushProduction: true },
   };

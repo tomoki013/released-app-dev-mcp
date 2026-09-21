@@ -74,7 +74,7 @@ server.tool(
 
 server.tool(
   'prepare_release',
-  'CREATES AND PUSHES A BRANCH (large strategy) and writes .app-dev-mcp.state.json. Validates and prepares a release candidate for the given version: checks clean tree, version/tag availability, un-synced hotfixes, committed secrets and CI. small: validates the existing release branch. large: creates release/X.Y.Z from develop and pushes it to origin. dry_run: true is read-only and also lists uncommitted files.',
+  'CREATES AND PUSHES A BRANCH (large strategy) and writes .app-dev-mcp.state.json. Validates and prepares a release candidate for the given version: checks clean tree, version/tag availability, un-synced hotfixes, committed secrets, CI, and that the App Store "What\'s New" (.appstore/<locale>/whats_new.txt, or a CHANGELOG.md section) was written for this version — it refuses to proceed without it. small: validates the existing release branch. large: creates release/X.Y.Z from develop and pushes it to origin. dry_run: true is read-only and also lists uncommitted files.',
   {
     version: z.string().describe('Target release version, e.g. "1.1.0".'),
     dry_run: z.boolean().optional().describe('List what would be checked and created without doing it.'),
@@ -84,7 +84,7 @@ server.tool(
 
 server.tool(
   'create_release_pr',
-  'CREATES A PULL REQUEST ON GITHUB (release candidate -> production) with an auto-generated change summary. Never merges it. Needs GitHub credentials (GITHUB_TOKEN or gh auth login). dry_run: true only previews the title/body.',
+  'CREATES A PULL REQUEST ON GITHUB (release candidate -> production) with an auto-generated change summary and the App Store "What\'s New" text for review. Never merges it. Needs GitHub credentials (GITHUB_TOKEN or gh auth login). dry_run: true only previews the title/body.',
   {
     version: z.string().describe('Target release version, e.g. "1.1.0".'),
     dry_run: z.boolean().optional().describe('Preview the PR title/body without creating it.'),
@@ -94,7 +94,7 @@ server.tool(
 
 server.tool(
   'finish_release',
-  'MERGES, TAGS AND PUSHES. Run this AFTER the version is live on the App Store. Merges the release branch into the production branch if the PR was not used, creates and pushes the annotated vX.Y.Z tag (never overwriting an existing tag), merges production back into the development line and pushes, and (only with delete_release_branch: true) deletes the temporary release branch locally and on origin.',
+  'MERGES, TAGS AND PUSHES. Run this AFTER the version is live on the App Store. Refuses to run until the App Store "What\'s New" for the version exists on the release branch. Merges the release branch into the production branch if the PR was not used, creates and pushes the annotated vX.Y.Z tag (never overwriting an existing tag), merges production back into the development line and pushes, and (only with delete_release_branch: true) deletes the temporary release branch locally and on origin.',
   {
     version: z.string().describe('The version that is now live, e.g. "1.1.0".'),
     dry_run: z.boolean().optional(),
@@ -120,7 +120,7 @@ server.tool(
 
 server.tool(
   'finish_hotfix',
-  'CREATES A PULL REQUEST, OR MERGES, TAGS AND PUSHES. Two phases: while the hotfix is not on main it opens its PR into main (or merges locally when GitHub is unreachable) and stops. Once merged, it creates and pushes the vX.Y.Z tag and merges main into the development branch and every in-flight release/X.Y.Z, pushing each. Stops on conflicts instead of resolving them.',
+  'CREATES A PULL REQUEST, OR MERGES, TAGS AND PUSHES. Two phases: while the hotfix is not on main it requires the App Store "What\'s New" on the hotfix branch, then opens its PR into main (or merges locally when GitHub is unreachable) and stops. Once merged, it creates and pushes the vX.Y.Z tag and merges main into the development branch and every in-flight release/X.Y.Z, pushing each. Stops on conflicts instead of resolving them.',
   {
     name: z.string().describe('The hotfix name passed to start_hotfix.'),
     version: z.string().optional().describe('The published hotfix version, e.g. "1.0.1". Needed to create the tag.'),
@@ -153,7 +153,7 @@ server.tool(
 
 server.tool(
   'doctor',
-  'READ-ONLY. Diagnoses this repository against the released-app Git policy: missing config, wrong branch structure, missing production tag, direct commits to main, un-synced hotfixes, abandoned release branches, commits on a frozen candidate, divergence, outdated/hand-edited workflows, PR triggers that skip a branch, strategy mismatch and branch protection. Reports only — never repairs.',
+  'READ-ONLY. Diagnoses this repository against the released-app Git policy: missing config, wrong branch structure, missing production tag, direct commits to main, un-synced hotfixes, abandoned release branches, commits on a frozen candidate, a candidate without App Store "What\'s New", divergence, outdated/hand-edited workflows, PR triggers that skip a branch, strategy mismatch and branch protection. Reports only — never repairs.',
   {},
   async () => text(await doctor(await ctx())),
 );

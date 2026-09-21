@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { buildContext, type ProjectContext } from '../src/core/context.js';
 import { defaultConfig, saveConfig, type StrategyName } from '../src/core/config.js';
 
@@ -61,10 +61,16 @@ export function commitOn(dir: string, branch: string, file: string, content: str
   const previous = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
   const exists = git(dir, 'branch', '--list', branch).length > 0;
   git(dir, 'checkout', exists ? branch : '-b', ...(exists ? [] : [branch]));
+  mkdirSync(dirname(join(dir, file)), { recursive: true });
   writeFileSync(join(dir, file), content);
   git(dir, 'add', '.');
   git(dir, 'commit', '-m', message);
   if (previous !== branch) git(dir, 'checkout', previous);
+}
+
+/** The App Store "What's New" text every release/hotfix must carry — committed on `branch`. */
+export function commitReleaseNotes(dir: string, branch: string, text = 'Bug fixes and a new sharing sheet.\n'): void {
+  commitOn(dir, branch, '.appstore/ja/whats_new.txt', text, "docs: what's new");
 }
 
 /** Commits whatever the tools just generated — the user's job in real use. */

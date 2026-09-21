@@ -38,6 +38,11 @@ Small / Large の 2 Strategy を 1 つの MCP サーバー内に持つ。
 5. MCP が使えない場合、通常の Git 運用へ fallback しない。
    MCP が利用不能であること・必要だった操作・未実行の処理を報告し、production 系操作を停止する。
    コード編集やテスト実行は続行してよい。
+6. **リリース / hotfix の前に、そのバージョンのアップデート情報（App Store "What's New"）を書く。**
+   `.appstore/<locale>/whats_new.txt` を利用者向けの言葉で更新し、出荷する branch に commit する。
+   `prepare_release` / `finish_release` / `finish_hotfix` は未記載だと停止する。
+   「Bug fixes and improvements」だけで済ませない。`release.requireReleaseNotes: false` を
+   勝手に設定して回避しない。
 
 未公開アプリ（`lifecycle = development`）にはこの Policy を強制しない。
 初回 App Store Release 完了時点で `setup_repository` により管理下へ移行する。

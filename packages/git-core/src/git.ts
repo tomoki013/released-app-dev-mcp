@@ -188,6 +188,17 @@ export class GitClient {
     await this.git.raw(['merge', '--abort']).catch(() => undefined);
   }
 
+  /** Resolves the given conflicted paths with the current branch's version and stages them. */
+  async keepOurs(files: string[]): Promise<void> {
+    await this.git.raw(['checkout', '--ours', '--', ...files]);
+    await this.git.raw(['add', '--', ...files]);
+  }
+
+  /** Records the in-progress merge (after every conflict is staged). */
+  async commitMerge(message: string): Promise<void> {
+    await this.git.raw(['commit', '-m', message]);
+  }
+
   /**
    * Answers "would merging `source` into `target` conflict?" WITHOUT touching
    * the working tree or any ref — `merge-tree --write-tree` merges in memory.

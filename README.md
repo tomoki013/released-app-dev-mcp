@@ -163,6 +163,7 @@ main
 - direct push 禁止: Small = `main` / `release`、Large = `main` / `develop` / `release/*`。
 - Release / Hotfix に関わる branch 作成・merge・tag 生成は MCP から実行する。
 - conflict は自動解決しない。**何も merge せずに停止して報告する。**
+  唯一の例外は `.appstore/<locale>/whats_new.txt` のみの conflict で、同期先の文面を残す（後述）。
 - `force push` / `reset --hard` / `tag overwrite` / `history rewrite` は自動実行しない。
 - branch 削除は「production に完全に含まれている」ことを確認したうえで、明示指定がある場合のみ。
 
@@ -188,7 +189,7 @@ Strategy は毎回推測せず、リポジトリに commit される設定ファ
     "releasePrefix": "release/",
     "featurePrefix": "feature/"
   },
-  "release": { "mergeStrategy": "merge", "requireCleanWorktree": true, "requireCi": true },
+  "release": { "mergeStrategy": "merge", "requireCleanWorktree": true, "requireCi": true, "requireReleaseNotes": true },
   "hotfix": { "source": "main" },
   "github": { "requirePullRequestToProduction": true, "blockForcePushProduction": true }
 }
@@ -218,6 +219,24 @@ Strategy は毎回推測せず、リポジトリに commit される設定ファ
 | `doctor` | Policy 違反の診断のみ。**勝手に修正しない**。workflow の版ずれ / 手編集、PR trigger の漏れ、Candidate 上の prepare 以降のコミットも報告する |
 
 すべての Tool は `dry_run` を持つ（`migrate_strategy` は既定 `true`）。
+
+### アップデート情報（What's New）は必須
+
+App Store に出る「このバージョンの最新情報」を後回しにさせない。`prepare_release` /
+`finish_release` / `finish_hotfix` は次のどちらかを満たすまで `✗` で止まる:
+
+1. `.appstore/<locale>/whats_new.txt`（[appstore-connect-mcp](https://github.com/tomoki013/appstore-connect-mcp) の SSOT）が
+   **前回リリース（最新 `vX.Y.Z` tag）以降に変更され、空でない**
+2. `CHANGELOG.md` に `## X.Y.Z` 節がある（Markdown で管理する repo 向け）
+
+判定はこれから出荷する branch（`release` / `release/X.Y.Z` / `hotfix/*`）の内容で行う。
+`doctor` は Candidate の未記載を `release_notes_missing` で事前に警告し、
+`create_release_pr` は PR 本文に What's New の全文を載せてレビュー対象にする。
+`.app-dev-mcp.json` の `release.requireReleaseNotes: false` で無効化できる（推奨しない）。
+
+hotfix を `develop` / `release/*` へ sync するとき、`whats_new.txt` **だけ**が conflict したら
+同期先の文面を残して merge を完了する（hotfix の What's New は hotfix 版のもの。次のリリースの
+文面を上書きしない）。他のファイルが conflict していれば従来通り停止する。
 
 ### 典型的な Release フロー
 
@@ -448,6 +467,7 @@ MCP を無視した branch strategy 変更
 | `doctor` が `release_branch_commits` を出す | prepare 以降に Candidate へ積まれたコミットの一覧。fix 以外は development branch へ移す |
 | `get_app_status` が古い `release/xxx` を Candidate 扱いしない | 仕様。`release/X.Y.Z`（semver）だけが Candidate |
 | `production tag "vX.Y.Z" is not taken` で止まる | 公開済み tag は上書きしない。バージョンを上げる |
+| `App Store "What's New" written for this version` で止まる | 出荷する branch 上で `.appstore/<locale>/whats_new.txt` を書いて commit する（前回 tag 以降の変更が必要）。または `CHANGELOG.md` に `## X.Y.Z` |
 | Large で `release/X.Y.Z` を作れない | `release` branch が残っている。`develop` に取り込んだ後に削除する |
 | CONFLICT で停止した | 自動解決しない仕様。`git checkout <target> && git merge <source>` で手動解決 |
 | CI が `no checks found` | commit を push していない、または GitHub 認証が無い（`GITHUB_TOKEN` か `gh auth login`） |

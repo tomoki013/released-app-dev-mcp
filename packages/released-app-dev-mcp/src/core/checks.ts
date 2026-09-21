@@ -119,6 +119,81 @@ export async function secretsCheck(ctx: ProjectContext, range: string): Promise<
   };
 }
 
+/** `.appstore/<locale>/whats_new.txt` — the App Store "What's New" text, as laid out by appstore-connect-mcp. */
+export const WHATS_NEW_PATH_RE = /^\.appstore\/[^/]+\/whats_new\.txt$/;
+
+export interface ReleaseNotesFile {
+  path: string;
+  content: string;
+}
+
+/**
+ * "What's New" files that changed on `branch` since the last shipped version
+ * (the highest vX.Y.Z tag, or the production branch when nothing is tagged
+ * yet), with their content as it is on that branch. Empty files are dropped.
+ */
+export async function changedReleaseNotes(ctx: ProjectContext, branch: string): Promise<{ since: string; files: ReleaseNotesFile[] } | null> {
+  const lastTag = highestVersionTag(await ctx.git.listTags());
+  const since = lastTag ?? ctx.strategy.productionBranch;
+  const range = lastTag ? `${lastTag}..${branch}` : `${since}...${branch}`;
+  let changed: string[];
+  try {
+    changed = (await ctx.git.raw(['diff', '--name-only', range])).split('\n').map((f) => f.trim()).filter(Boolean);
+  } catch {
+    return null;
+  }
+  const files: ReleaseNotesFile[] = [];
+  for (const path of changed.filter((f) => WHATS_NEW_PATH_RE.test(f))) {
+    const content = await ctx.git.raw(['show', `${branch}:${path}`]).catch(() => '');
+    if (content.trim()) files.push({ path, content: content.trim() });
+  }
+  return { since, files };
+}
+
+/**
+ * Every App Store release carries a "What's New" text, and writing it after
+ * the fact is how it ends up as "Bug fixes and improvements". So a release or
+ * hotfix does not start until the notes for it exist on the branch being
+ * shipped — either the SSOT files appstore-connect-mcp uploads, or (for repos
+ * that keep notes in Markdown) a `## X.Y.Z` section in CHANGELOG.md.
+ */
+export async function releaseNotesCheck(ctx: ProjectContext, branch: string, version?: string): Promise<ValidationCheck> {
+  const id = 'release_notes';
+  const label = 'App Store "What\'s New" written for this version';
+  if (!ctx.config.release.requireReleaseNotes) {
+    return { id, label, ok: true, severity: 'warning', detail: 'requirement disabled in config (release.requireReleaseNotes)' };
+  }
+
+  const notes = await changedReleaseNotes(ctx, branch);
+  if (!notes) return { id, label, ok: false, severity: 'warning', detail: `could not diff "${branch}" against the last release` };
+  if (notes.files.length > 0) {
+    return { id, label, ok: true, severity: 'error', detail: `${notes.files.map((f) => f.path).join(', ')} updated since ${notes.since}` };
+  }
+
+  if (version) {
+    const changelog = await ctx.git.raw(['show', `${branch}:CHANGELOG.md`]).catch(() => '');
+    if (hasVersionHeading(changelog, version)) {
+      return { id, label, ok: true, severity: 'error', detail: `CHANGELOG.md on "${branch}" has a ${version} section` };
+    }
+  }
+
+  return {
+    id,
+    label,
+    ok: false,
+    severity: 'error',
+    detail:
+      `.appstore/<locale>/whats_new.txt has not changed since ${notes.since}` +
+      (version ? ` and CHANGELOG.md has no "## ${version}" section` : '') +
+      ` — write what users get in this version and commit it on "${branch}" first`,
+  };
+}
+
+function hasVersionHeading(markdown: string, version: string): boolean {
+  const escaped = version.replace(/\./g, '\\.');
+  return new RegExp(`^##\\s*\\[?v?${escaped}\\]?(\\s|$)`, 'm').test(markdown);
+}
+
 export async function noActiveHotfixCheck(ctx: ProjectContext): Promise<ValidationCheck> {
   const hotfixes = await ctx.git.listLocalBranchesWithPrefix(ctx.config.branches.hotfixPrefix);
   return {

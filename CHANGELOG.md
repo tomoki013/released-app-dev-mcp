@@ -11,6 +11,20 @@
 
 ## Unreleased
 
+### Added
+- **アプリ側のアップデート情報（App Store "What's New"）を義務化。** `prepare_release` / `finish_release` /
+  `finish_hotfix` は、前回リリース（最新 `vX.Y.Z` tag）以降に `.appstore/<locale>/whats_new.txt` が
+  変更されていない（または空）と `✗` で停止する。`CHANGELOG.md` に `## X.Y.Z` 節があれば代替可。
+  `.app-dev-mcp.json` の `release.requireReleaseNotes: false` で無効化できる。
+- `doctor` に `release_notes_missing`（Candidate の What's New 未記載）を追加。
+- `create_release_pr` の PR 本文に What's New の全文（locale ごと）を載せる。
+
+### Changed
+- hotfix / release の sync で `.appstore/<locale>/whats_new.txt` **だけ**が conflict する場合は、
+  同期先 branch（`develop` / `release` / 進行中の `release/X.Y.Z`）側の内容を残して merge を完了する。
+  各バージョンは自分の What's New を持つため、hotfix の文面で上書きしてはならない。
+  それ以外の conflict は従来通り何も merge せず停止する。
+
 ## 0.3.0 - 2026-09-22
 
 ### Added

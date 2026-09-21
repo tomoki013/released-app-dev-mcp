@@ -12,6 +12,7 @@ import {
   branchExists,
   commitAll,
   commitOn,
+  commitReleaseNotes,
   createTestRepo,
   ctxFor,
   currentBranch,
@@ -64,6 +65,7 @@ test('small: feature -> release -> prepare_release -> finish_release tags and sy
   git(dir, 'checkout', 'release');
   git(dir, 'merge', '--no-ff', '-m', 'Merge feature/greeting', 'feature/greeting');
   git(dir, 'checkout', 'main');
+  commitReleaseNotes(dir, 'release');
 
   const prepared = await prepareRelease(await ctxFor(dir), { version: '1.1.0' });
   assert.match(prepared, /Ready\./);
@@ -105,6 +107,7 @@ test('small: hotfix branches from main, tags, and syncs back into release', asyn
   writeFileSync(join(dir, 'Fix.swift'), 'let fixed = true\n');
   git(dir, 'add', '.');
   git(dir, 'commit', '-m', 'fix: stop crashing at startup');
+  commitReleaseNotes(dir, 'hotfix/1.0.1', 'Fixes a crash at startup.\n');
 
   const finished = await finishHotfix(await ctxFor(dir), { name: 'startup crash', version: '1.0.1' });
   assert.match(finished, /tagged "v1\.0\.1"/);

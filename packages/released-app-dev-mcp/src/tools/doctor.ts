@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
 import { highestVersionTag } from '@app-dev/git-core';
+import { releaseNotesCheck } from '../core/checks.js';
 import { CONFIG_FILENAME } from '../core/config.js';
 import { GITHUB_TOKEN_HINT, resolveGitHubClient, resolveProject, type ProjectContext } from '../core/context.js';
 import { loadState } from '../core/state.js';
@@ -189,6 +190,15 @@ export async function doctor(ctx: ProjectContext): Promise<string> {
         fix: `finish_release(version: "${candidate.version}") if it shipped, or ignore it if it was abandoned`,
       });
       continue;
+    }
+    const notes = await releaseNotesCheck(ctx, candidate.releaseBranch, candidate.version);
+    if (!notes.ok && notes.severity === 'error') {
+      findings.push({
+        severity: 'warning',
+        id: 'release_notes_missing',
+        message: `Candidate ${candidate.version} on "${candidate.releaseBranch}" has no App Store "What's New" yet — ${notes.detail}`,
+        fix: `write .appstore/<locale>/whats_new.txt on "${candidate.releaseBranch}"; finish_release will refuse to tag without it`,
+      });
     }
     // A candidate takes fixes only. The rule is enforced by people, so show
     // them what landed since the freeze and let them judge each commit.

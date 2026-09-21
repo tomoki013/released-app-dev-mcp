@@ -1,5 +1,5 @@
 import { formatChecklist, type ValidationCheck, type ValidationResult } from '@app-dev/git-core';
-import { cleanWorktreeCheck, ciCheck, secretsCheck, versionChecks } from '../core/checks.js';
+import { cleanWorktreeCheck, ciCheck, releaseNotesCheck, secretsCheck, versionChecks } from '../core/checks.js';
 import { requireManaged, resolveProject, type ProjectContext } from '../core/context.js';
 import { recordCandidate } from '../core/state.js';
 
@@ -37,7 +37,8 @@ export async function prepareRelease(ctx: ProjectContext, opts: PrepareReleaseOp
       `  3. version "${opts.version}" is valid semver, newer than the published version, and its tag is free`,
       `  4. "${plan.branch}" carries the latest "${production}" (no dropped hotfix)`,
       '  5. no credential files in the release diff',
-      '  6. CI is green',
+      '  6. App Store "What\'s New" written: .appstore/<locale>/whats_new.txt changed since the last release (or CHANGELOG.md has a version section)',
+      '  7. CI is green',
       '',
       'No changes were made.',
     ].join('\n');
@@ -60,6 +61,9 @@ export async function prepareRelease(ctx: ProjectContext, opts: PrepareReleaseOp
   const sourceForDiff = branchExists ? plan.branch : plan.source;
   if (productionExists && (await ctx.git.localBranchExists(sourceForDiff))) {
     checks.push(await secretsCheck(ctx, `${production}...${sourceForDiff}`));
+  }
+  if (await ctx.git.localBranchExists(sourceForDiff)) {
+    checks.push(await releaseNotesCheck(ctx, sourceForDiff, opts.version));
   }
   checks.push(await ciCheck(ctx, sourceForDiff));
 

@@ -11,6 +11,7 @@ import {
   branchExists,
   commitAll,
   commitOn,
+  commitReleaseNotes,
   createTestRepo,
   ctxFor,
   currentBranch,
@@ -61,6 +62,7 @@ test('large: prepare_release cuts release/X.Y.Z from develop', async () => {
   git(dir, 'checkout', 'develop');
   git(dir, 'merge', '--no-ff', '-m', 'Merge feature/sharing', 'feature/sharing');
   git(dir, 'checkout', 'main');
+  commitReleaseNotes(dir, 'develop');
 
   const output = await prepareRelease(await ctxFor(dir), { version: '1.4.0' });
 
@@ -73,6 +75,7 @@ test('large: prepare_release cuts release/X.Y.Z from develop', async () => {
 test('large: finish_release tags, syncs develop and retires the candidate branch', async () => {
   const dir = await setupLarge();
   commitOn(dir, 'develop', 'Sharing.swift', 'let shared = true\n', 'feat: sharing');
+  commitReleaseNotes(dir, 'develop');
   await prepareRelease(await ctxFor(dir), { version: '1.4.0' });
 
   // A fix made on the frozen candidate must come back to develop.
@@ -92,6 +95,7 @@ test('large: finish_release tags, syncs develop and retires the candidate branch
 test('large: finish_release keeps the candidate branch unless deletion is requested', async () => {
   const dir = await setupLarge();
   commitOn(dir, 'develop', 'Sharing.swift', 'let shared = true\n', 'feat: sharing');
+  commitReleaseNotes(dir, 'develop');
   await prepareRelease(await ctxFor(dir), { version: '1.4.0' });
 
   const output = await finishRelease(await ctxFor(dir), { version: '1.4.0' });
@@ -104,12 +108,14 @@ test('large: a hotfix reaches develop and every in-flight release candidate', as
   const dir = await setupLarge();
   git(dir, 'tag', '-a', 'v1.4.0', '-m', 'Release 1.4.0');
   commitOn(dir, 'develop', 'Next.swift', 'let next = true\n', 'feat: next version work');
+  commitReleaseNotes(dir, 'develop');
   await prepareRelease(await ctxFor(dir), { version: '1.5.0' });
 
   await startHotfix(await ctxFor(dir), { name: 'crash on launch', version: '1.4.1' });
   writeFileSync(join(dir, 'Fix.swift'), 'let fixed = true\n');
   git(dir, 'add', '.');
   git(dir, 'commit', '-m', 'fix: crash on launch');
+  commitReleaseNotes(dir, 'hotfix/1.4.1', 'Fixes a crash on launch.\n');
   const hotfixCommit = git(dir, 'rev-parse', 'hotfix/1.4.1');
 
   const output = await finishHotfix(await ctxFor(dir), { name: 'crash on launch', version: '1.4.1' });
@@ -122,11 +128,18 @@ test('large: a hotfix reaches develop and every in-flight release candidate', as
     'hotfix must reach the in-flight release candidate, or 1.5.0 would ship without it',
   );
   assert.match(output, /release\/1\.5\.0/);
+  // Each version ships its own What's New: the hotfix text must not replace
+  // what develop and the candidate are preparing.
+  assert.match(output, /kept "develop"'s own \.appstore\/ja\/whats_new\.txt/);
+  assert.equal(fileOnBranch(dir, 'develop', '.appstore/ja/whats_new.txt'), 'Bug fixes and a new sharing sheet.\n');
+  assert.equal(fileOnBranch(dir, 'release/1.5.0', '.appstore/ja/whats_new.txt'), 'Bug fixes and a new sharing sheet.\n');
+  assert.equal(fileOnBranch(dir, 'main', '.appstore/ja/whats_new.txt'), 'Fixes a crash on launch.\n');
 });
 
 test('large: a conflicting hotfix sync stops without touching the candidate', async () => {
   const dir = await setupLarge();
   commitOn(dir, 'develop', 'Shared.swift', 'develop value\n', 'feat: develop value');
+  commitReleaseNotes(dir, 'develop');
   await prepareRelease(await ctxFor(dir), { version: '2.0.0' });
   commitOn(dir, 'release/2.0.0', 'Shared.swift', 'candidate value\n', 'fix: candidate value');
   const candidateHead = git(dir, 'rev-parse', 'release/2.0.0');
@@ -135,6 +148,7 @@ test('large: a conflicting hotfix sync stops without touching the candidate', as
   writeFileSync(join(dir, 'Shared.swift'), 'hotfix value\n');
   git(dir, 'add', '.');
   git(dir, 'commit', '-m', 'fix: urgent');
+  commitReleaseNotes(dir, 'hotfix/1.0.1', 'Urgent fix.\n');
 
   const output = await finishHotfix(await ctxFor(dir), { name: 'urgent', version: '1.0.1' });
 

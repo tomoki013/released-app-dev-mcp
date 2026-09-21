@@ -1,4 +1,5 @@
 import { createPullRequest, findOpenPullRequest } from '@app-dev/git-core';
+import { changedReleaseNotes, type ReleaseNotesFile } from '../core/checks.js';
 import { GITHUB_TOKEN_HINT, requireManaged, resolveGitHubClient, type ProjectContext } from '../core/context.js';
 
 export interface CreateReleasePrOptions {
@@ -28,7 +29,8 @@ export async function createReleasePr(ctx: ProjectContext, opts: CreateReleasePr
   }
 
   const commits = await ctx.git.logRange(`${production}..${plan.branch}`);
-  const body = buildReleaseBody(opts.version, strategy.name, plan.branch, commits);
+  const notes = (await changedReleaseNotes(ctx, plan.branch))?.files ?? [];
+  const body = buildReleaseBody(opts.version, strategy.name, plan.branch, commits, notes);
 
   if (opts.dryRun) {
     return [
@@ -67,6 +69,7 @@ function buildReleaseBody(
   strategy: string,
   branch: string,
   commits: Array<{ message: string }>,
+  notes: ReleaseNotesFile[],
 ): string {
   const groups = new Map<string, string[]>();
   const other: string[] = [];
@@ -91,6 +94,16 @@ function buildReleaseBody(
   }
   if (other.length) sections.push(`### Other\n${other.map((i) => `- ${i}`).join('\n')}`);
   if (groups.size === 0 && other.length === 0) sections.push('_No commits found between the two branches._');
+
+  // The App Store text ships with this PR — reviewing it here is the last
+  // chance before it goes live for every user.
+  if (notes.length > 0) {
+    sections.push('', "### What's New (App Store)");
+    for (const note of notes) {
+      const locale = note.path.split('/')[1];
+      sections.push(`**${locale}** (\`${note.path}\`)`, '', note.content, '');
+    }
+  }
 
   sections.push('', `After the App Store release is live, run \`finish_release(version: "${version}")\`.`);
   return sections.join('\n');

@@ -1,5 +1,5 @@
 import { formatChecklist, tagForVersion, type ValidationCheck } from '@app-dev/git-core';
-import { cleanWorktreeCheck, versionChecks } from '../core/checks.js';
+import { cleanWorktreeCheck, releaseNotesCheck, versionChecks } from '../core/checks.js';
 import { requireManaged, resolveProject, type ProjectContext } from '../core/context.js';
 import { featureBranchReminder, formatMergeOutcome, hasBlockingOutcome, syncTargets } from '../core/merge.js';
 import { cleanupBranch, createProductionTag, mergeIntoProduction } from '../core/release.js';
@@ -62,6 +62,9 @@ export async function finishRelease(ctx: ProjectContext, opts: FinishReleaseOpti
   // Only the "tag is free / version is newer" parts matter here; the branch
   // shape was already validated by prepare_release.
   checks.push(...(await versionChecks(ctx, opts.version)));
+  // The tag is the record of what shipped; refuse to write it for a version
+  // whose "What's New" was never written.
+  if (branchExists) checks.push(await releaseNotesCheck(ctx, plan.branch, opts.version));
 
   if (candidate) {
     const head = await ctx.git.revParse(plan.branch);

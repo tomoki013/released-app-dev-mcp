@@ -6,7 +6,7 @@ import {
   tagForVersion,
   type ValidationCheck,
 } from '@app-dev/git-core';
-import { ciCheck, cleanWorktreeCheck } from '../core/checks.js';
+import { ciCheck, cleanWorktreeCheck, releaseNotesCheck } from '../core/checks.js';
 import { requireManaged, resolveGitHubClient, resolveProject, type ProjectContext } from '../core/context.js';
 import { featureBranchReminder, formatMergeOutcome, hasBlockingOutcome, syncTargets } from '../core/merge.js';
 import { cleanupBranch, createProductionTag, mergeIntoProduction } from '../core/release.js';
@@ -46,7 +46,7 @@ export async function finishHotfix(ctx: ProjectContext, opts: FinishHotfixOption
       '',
       `Hotfix branch: ${branch}`,
       'Would:',
-      '  1. check clean working tree and green CI',
+      '  1. check clean working tree, App Store "What\'s New" written on the hotfix branch, and green CI',
       `  2. open (or reuse) the PR "${branch}" -> "${production}", or merge locally when GitHub is unreachable`,
       version
         ? `  3. once merged: tag "${tagForVersion(version)}" on "${production}"`
@@ -61,7 +61,11 @@ export async function finishHotfix(ctx: ProjectContext, opts: FinishHotfixOption
   const alreadyMerged = branchSha ? await ctx.git.isAncestor(branchSha, production) : false;
 
   if (!alreadyMerged) {
-    const checks: ValidationCheck[] = [await cleanWorktreeCheck(ctx), await ciCheck(ctx, branch)];
+    const checks: ValidationCheck[] = [
+      await cleanWorktreeCheck(ctx),
+      await releaseNotesCheck(ctx, branch, version),
+      await ciCheck(ctx, branch),
+    ];
     const result = { ok: checks.every((c) => c.ok || c.severity === 'warning'), checks };
     if (!result.ok) return formatChecklist(`${branch} readiness`, result);
 
